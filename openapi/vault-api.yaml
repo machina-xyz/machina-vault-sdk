@@ -1,0 +1,1089 @@
+openapi: 3.1.0
+info:
+  title: MACHINA Vault API
+  version: 0.1.0
+  description: |
+    REST API for MACHINA Vault — keyless secure enclave wallets for autonomous agents.
+    One passkey → one vault → all chains.
+  contact:
+    name: MACHINA
+    url: https://machina.money
+  license:
+    name: MIT
+
+servers:
+  - url: https://api.machina.money/v1
+    description: Production
+  - url: https://api-staging.machina.money/v1
+    description: Staging
+
+security:
+  - ApiKeyAuth: []
+  - BearerAuth: []
+
+tags:
+  - name: Vault
+    description: Vault lifecycle operations
+  - name: Keys
+    description: Key hierarchy management
+  - name: Signing
+    description: Transaction signing and broadcasting
+  - name: Balances
+    description: Cross-chain balance queries
+  - name: Identity
+    description: On-chain identity and A2A agent card
+  - name: Reputation
+    description: Reputation score and attestations
+  - name: Policy
+    description: Transaction policy management
+  - name: Counterparty
+    description: Counterparty risk assessment
+
+paths:
+  /vault:
+    post:
+      operationId: createVault
+      tags: [Vault]
+      summary: Create a new vault
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  description: Human-readable vault name
+                chains:
+                  type: array
+                  items:
+                    type: string
+                  description: Chain IDs to enable
+                policy:
+                  type: string
+                  description: Natural language policy description
+              required: [name]
+      responses:
+        '201':
+          description: Vault created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VaultInfo'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /vault/{vaultId}:
+    get:
+      operationId: getVault
+      tags: [Vault]
+      summary: Get vault information
+      parameters:
+        - $ref: '#/components/parameters/VaultId'
+      responses:
+        '200':
+          description: Vault info
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VaultInfo'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      operationId: destroyVault
+      tags: [Vault]
+      summary: Destroy a vault (requires root key)
+      parameters:
+        - $ref: '#/components/parameters/VaultId'
+      responses:
+        '204':
+          description: Vault destroyed
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /vault/{vaultId}/keys:
+    get:
+      operationId: listKeys
+      tags: [Keys]
+      summary: List all keys for a vault
+      parameters:
+        - $ref: '#/components/parameters/VaultId'
+        - name: tier
+          in: query
+          schema:
+            $ref: '#/components/schemas/KeyTier'
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [active, revoked, expired, rotating]
+      responses:
+        '200':
+          description: Key list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  keys:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/KeyInfo'
+
+    post:
+      operationId: createKey
+      tags: [Keys]
+      summary: Create a new key
+      parameters:
+        - $ref: '#/components/parameters/VaultId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateKeyRequest'
+      responses:
+        '201':
+          description: Key created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KeyInfo'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /vault/{vaultId}/keys/{keyId}:
+    get:
+      operationId: getKey
+      tags: [Keys]
+      summary: Get key details
+      parameters:
+        - $ref: '#/components/parameters/VaultId'
+        - $ref: '#/components/parameters/KeyId'
+      responses:
+        '200':
+          description: Key info
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KeyInfo'
+
+    delete:
+      operationId: revokeKey
+      tags: [Keys]
+      summary: Revoke a key
+      parameters:
+        - $ref: '#/components/parameters/VaultId'
+        - $ref: '#/components/parameters/KeyId'
+      responses:
+        '204':
+          description: Key revoked
+
+  /vault/{vaultId}/keys/{keyId}/rotate:
+    post:
+      operationId: rotateKey
+      tags: [Keys]
+      summary: Rotate a key
+      parameters:
+        - $ref: '#/components/parameters/VaultId'
+        - $ref: '#/components/parameters/KeyId'
+      responses:
+        '200':
+          description: New key after rotation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KeyInfo'
+
+  /vault/{vaultId}/keys/{keyId}/spending:
+    get:
+      operationId: getSpendingUsage
+      tags: [Keys]
+      summary: Get spending limit usage for a key
+      parameters:
+        - $ref: '#/components/parameters/VaultId'
+        - $ref: '#/components/parameters/KeyId'
+      responses:
+        '200':
+          description: Spending usage
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpendingUsage'
+
+  /vault/{vaultId}/sign:
+    post:
+      operationId: signTransaction
+      tags: [Signing]
+      summary: Sign a transaction
+      parameters:
+        - $ref: '#/components/parameters/VaultId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignRequest'
+      responses:
+        '200':
+          description: Signed transaction
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SignedTransaction'
+        '403':
+          description: Policy violation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicyViolationError'
+
+  /vault/{vaultId}/sign-and-broadcast:
+    post:
+      operationId: signAndBroadcast
+      tags: [Signing]
+      summary: Sign and broadcast a transaction
+      parameters:
+        - $ref: '#/components/parameters/VaultId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignRequest'
+      responses:
+        '200':
+          description: Broadcast result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  hash:
+                    type: string
+                  status:
+                    type: string
+                  chain:
+                    type: string
+
+  /vault/{vaultId}/estimate-gas:
+    post:
+      operationId: estimateGas
+      tags: [Signing]
+      summary: Estimate gas for a transaction
+      parameters:
+        - $ref: '#/components/parameters/VaultId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignRequest'
+      responses:
+        '200':
+          description: Gas estimate
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  gasLimit:
+                    type: string
+                  gasCost:
+                    type: string
+                  gasCostUsd:
+                    type: string
+
+  /vault/{vaultId}/transactions/{hash}:
+    get:
+      operationId: getTransaction
+      tags: [Signing]
+      summary: Get transaction status
+      parameters:
+        - $ref: '#/components/parameters/VaultId'
+        - name: hash
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: chain
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Transaction status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [pending, confirmed, failed]
+                  confirmations:
+                    type: integer
+                  blockNumber:
+                    type: integer
+
+  /vault/{vaultId}/balances:
+    get:
+      operationId: getBalances
+      tags: [Balances]
+      summary: Get token balances
+      parameters:
+        - $ref: '#/components/parameters/VaultId'
+        - name: chain
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Balance list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  balances:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/BalanceInfo'
+
+  /vault/{vaultId}/balances/aggregated:
+    get:
+      operationId: getAggregatedBalances
+      tags: [Balances]
+      summary: Get aggregated USD balances across chains
+      parameters:
+        - $ref: '#/components/parameters/VaultId'
+      responses:
+        '200':
+          description: Aggregated balances
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  totalUsd:
+                    type: string
+                  byChain:
+                    type: object
+                    additionalProperties:
+                      type: string
+
+  /vault/{vaultId}/balances/{chain}/{token}:
+    get:
+      operationId: getTokenBalance
+      tags: [Balances]
+      summary: Get balance for a specific token on a chain
+      parameters:
+        - $ref: '#/components/parameters/VaultId'
+        - name: chain
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Token balance
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BalanceInfo'
+
+  /vault/{vaultId}/balances/history:
+    get:
+      operationId: getBalanceHistory
+      tags: [Balances]
+      summary: Get balance history
+      parameters:
+        - $ref: '#/components/parameters/VaultId'
+        - name: chain
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: token
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: days
+          in: query
+          schema:
+            type: integer
+            default: 30
+      responses:
+        '200':
+          description: Balance history
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  history:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        timestamp:
+                          type: string
+                          format: date-time
+                        balance:
+                          type: string
+                        balanceUsd:
+                          type: string
+
+  /vault/{vaultId}/identity:
+    get:
+      operationId: getIdentity
+      tags: [Identity]
+      summary: Get vault identity
+      parameters:
+        - $ref: '#/components/parameters/VaultId'
+      responses:
+        '200':
+          description: Vault identity
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VaultIdentity'
+
+    put:
+      operationId: updateIdentity
+      tags: [Identity]
+      summary: Update vault identity profile
+      parameters:
+        - $ref: '#/components/parameters/VaultId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                description:
+                  type: string
+                capabilities:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        '200':
+          description: Updated identity
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VaultIdentity'
+
+  /vault/{vaultId}/identity/agent-card:
+    get:
+      operationId: getAgentCard
+      tags: [Identity]
+      summary: Get A2A Agent Card
+      parameters:
+        - $ref: '#/components/parameters/VaultId'
+      responses:
+        '200':
+          description: Agent card
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /vault/{vaultId}/identity/register:
+    post:
+      operationId: registerIdentityOnChain
+      tags: [Identity]
+      summary: Register identity on-chain (ERC-8004)
+      parameters:
+        - $ref: '#/components/parameters/VaultId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                chain:
+                  type: string
+              required: [chain]
+      responses:
+        '200':
+          description: Registration transaction
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  txHash:
+                    type: string
+
+  /vault/{vaultId}/reputation:
+    get:
+      operationId: getReputation
+      tags: [Reputation]
+      summary: Get vault reputation
+      parameters:
+        - $ref: '#/components/parameters/VaultId'
+      responses:
+        '200':
+          description: Reputation profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReputationProfile'
+
+  /vault/{vaultId}/reputation/attestation:
+    post:
+      operationId: requestAttestation
+      tags: [Reputation]
+      summary: Request attestation from a peer
+      parameters:
+        - $ref: '#/components/parameters/VaultId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                peerAddress:
+                  type: string
+              required: [peerAddress]
+      responses:
+        '200':
+          description: Attestation request created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  requestId:
+                    type: string
+
+  /vault/{vaultId}/reputation/threshold:
+    get:
+      operationId: checkReputationThreshold
+      tags: [Reputation]
+      summary: Check if vault meets reputation threshold
+      parameters:
+        - $ref: '#/components/parameters/VaultId'
+        - name: minScore
+          in: query
+          schema:
+            type: integer
+        - name: minTier
+          in: query
+          schema:
+            type: string
+            enum: [unverified, emerging, established, trusted, elite]
+      responses:
+        '200':
+          description: Threshold check result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  meets:
+                    type: boolean
+
+  /reputation/{address}:
+    get:
+      operationId: getReputationByAddress
+      tags: [Reputation]
+      summary: Get reputation for any address
+      parameters:
+        - name: address
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Reputation profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReputationProfile'
+
+  /vault/{vaultId}/policy:
+    get:
+      operationId: getPolicy
+      tags: [Policy]
+      summary: Get vault policy
+      parameters:
+        - $ref: '#/components/parameters/VaultId'
+      responses:
+        '200':
+          description: Policy configuration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicyConfig'
+
+    put:
+      operationId: setPolicy
+      tags: [Policy]
+      summary: Set vault policy
+      parameters:
+        - $ref: '#/components/parameters/VaultId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PolicyConfig'
+      responses:
+        '200':
+          description: Policy updated
+
+  /vault/{vaultId}/policy/evaluate:
+    post:
+      operationId: evaluatePolicy
+      tags: [Policy]
+      summary: Dry-run policy evaluation
+      parameters:
+        - $ref: '#/components/parameters/VaultId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignRequest'
+      responses:
+        '200':
+          description: Policy evaluation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicyResult'
+
+  /vault/{vaultId}/policy/parse:
+    post:
+      operationId: parsePolicyNaturalLanguage
+      tags: [Policy]
+      summary: Parse natural language into policy rules
+      parameters:
+        - $ref: '#/components/parameters/VaultId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                description:
+                  type: string
+              required: [description]
+      responses:
+        '200':
+          description: Parsed policy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicyConfig'
+
+  /counterparty/{address}:
+    get:
+      operationId: checkCounterparty
+      tags: [Counterparty]
+      summary: Check counterparty risk
+      parameters:
+        - name: address
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Counterparty profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CounterpartyProfile'
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: MACHINA API key (mach_...)
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT session token
+
+  parameters:
+    VaultId:
+      name: vaultId
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Vault ID
+    KeyId:
+      name: keyId
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Key ID
+
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Forbidden:
+      description: Forbidden (policy violation or insufficient permissions)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    VaultInfo:
+      type: object
+      properties:
+        id:
+          type: string
+        address:
+          type: string
+        name:
+          type: string
+        chains:
+          type: array
+          items:
+            type: string
+        status:
+          type: string
+          enum: [active, locked, destroyed]
+        createdAt:
+          type: string
+          format: date-time
+      required: [id, address, chains, status, createdAt]
+
+    KeyTier:
+      type: string
+      enum: [root, operator, agent, session]
+
+    KeyInfo:
+      type: object
+      properties:
+        id:
+          type: string
+        tier:
+          $ref: '#/components/schemas/KeyTier'
+        publicKey:
+          type: string
+        address:
+          type: string
+        name:
+          type: string
+        permissions:
+          type: array
+          items:
+            type: string
+        spendingLimits:
+          $ref: '#/components/schemas/SpendingLimits'
+        contractAllowlist:
+          type: array
+          items:
+            type: string
+        status:
+          type: string
+          enum: [active, revoked, expired, rotating]
+        expiresAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+      required: [id, tier, publicKey, status, createdAt]
+
+    CreateKeyRequest:
+      type: object
+      properties:
+        tier:
+          $ref: '#/components/schemas/KeyTier'
+        name:
+          type: string
+        permissions:
+          type: array
+          items:
+            type: string
+        spendingLimits:
+          $ref: '#/components/schemas/SpendingLimits'
+        contractAllowlist:
+          type: array
+          items:
+            type: string
+        ttlMs:
+          type: integer
+          description: Time-to-live in milliseconds (session keys)
+      required: [tier, name]
+
+    SpendingLimits:
+      type: object
+      properties:
+        perTransaction:
+          type: string
+        daily:
+          type: string
+        monthly:
+          type: string
+
+    SpendingUsage:
+      type: object
+      properties:
+        perTransaction:
+          type: object
+          properties:
+            limit:
+              type: string
+            used:
+              type: string
+        daily:
+          type: object
+          properties:
+            limit:
+              type: string
+            used:
+              type: string
+            resetsAt:
+              type: string
+              format: date-time
+        monthly:
+          type: object
+          properties:
+            limit:
+              type: string
+            used:
+              type: string
+            resetsAt:
+              type: string
+              format: date-time
+
+    SignRequest:
+      type: object
+      properties:
+        key:
+          type: string
+          description: Key ID to sign with (defaults to primary agent key)
+        chain:
+          type: string
+        to:
+          type: string
+        value:
+          type: string
+        data:
+          type: string
+        gasLimit:
+          type: string
+      required: [chain, to]
+
+    SignedTransaction:
+      type: object
+      properties:
+        hash:
+          type: string
+        signedTx:
+          type: string
+        chain:
+          type: string
+      required: [hash, signedTx, chain]
+
+    BalanceInfo:
+      type: object
+      properties:
+        chain:
+          type: string
+        token:
+          type: string
+        balance:
+          type: string
+        balanceUsd:
+          type: string
+      required: [chain, token, balance]
+
+    VaultIdentity:
+      type: object
+      properties:
+        agentId:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        capabilities:
+          type: array
+          items:
+            type: string
+        registrationTx:
+          type: string
+        a2aCard:
+          type: object
+        kyaMetadata:
+          type: object
+        reputation:
+          $ref: '#/components/schemas/ReputationProfile'
+
+    ReputationProfile:
+      type: object
+      properties:
+        score:
+          type: integer
+          minimum: 0
+          maximum: 1000
+        tier:
+          type: string
+          enum: [unverified, emerging, established, trusted, elite]
+        components:
+          type: object
+          properties:
+            transactionHistory:
+              type: integer
+            peerAttestations:
+              type: integer
+            complianceRecord:
+              type: integer
+            protocolParticipation:
+              type: integer
+            longevity:
+              type: integer
+        attestations:
+          type: integer
+        lastUpdated:
+          type: string
+          format: date-time
+      required: [score, tier, components, lastUpdated]
+
+    CounterpartyProfile:
+      type: object
+      properties:
+        address:
+          type: string
+        reputation:
+          $ref: '#/components/schemas/ReputationProfile'
+        sanctions:
+          type: object
+          properties:
+            sanctioned:
+              type: boolean
+            lists:
+              type: array
+              items:
+                type: string
+            source:
+              type: string
+        riskScore:
+          type: number
+        safe:
+          type: boolean
+      required: [address, riskScore, safe]
+
+    PolicyConfig:
+      type: object
+      properties:
+        rules:
+          type: array
+          items:
+            $ref: '#/components/schemas/PolicyRule'
+
+    PolicyRule:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        action:
+          type: string
+          enum: [allow, deny, require_approval, alert, rate_limit]
+        conditions:
+          type: array
+          items:
+            type: object
+        priority:
+          type: integer
+        enabled:
+          type: boolean
+      required: [id, name, action, conditions, priority]
+
+    PolicyResult:
+      type: object
+      properties:
+        allowed:
+          type: boolean
+        action:
+          type: string
+        matchedRules:
+          type: array
+          items:
+            type: string
+        reasons:
+          type: array
+          items:
+            type: string
+      required: [allowed, action]
+
+    PolicyViolationError:
+      type: object
+      properties:
+        error:
+          type: string
+        code:
+          type: string
+          enum: [POLICY_VIOLATION]
+        matchedRules:
+          type: array
+          items:
+            type: string
+        reasons:
+          type: array
+          items:
+            type: string
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        code:
+          type: string
+        message:
+          type: string
+        context:
+          type: object
+      required: [error, code, message]
