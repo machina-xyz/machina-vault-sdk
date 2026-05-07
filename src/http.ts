@@ -19,8 +19,11 @@ export class HttpClient {
     baseUrl: string,
     getAuthHeaders: () => Promise<Record<string, string>>,
   ) {
-    // Strip trailing slash
-    this.baseUrl = baseUrl.replace(/\/+$/, "");
+    // Strip trailing slashes via index slice rather than the polynomial
+    // regex /\/+$/ to avoid CodeQL js/polynomial-redos.
+    let end = baseUrl.length;
+    while (end > 0 && baseUrl.charCodeAt(end - 1) === 0x2f /* '/' */) end--;
+    this.baseUrl = baseUrl.slice(0, end);
     this.getAuthHeaders = getAuthHeaders;
   }
 
